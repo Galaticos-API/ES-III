@@ -12,6 +12,13 @@ spring:
           model: ${SOC_AGENT_MODEL:qwen2.5:7b}
           temperature: 0.1
 
+soc-agent:
+  # Estrategia ativa: human-in-the-loop | plan-then-execute | react
+  planner: human-in-the-loop
+  # Abaixo desta confianca o veredito nunca e acionavel sem revisao humana
+  minimum-confidence: 0.6
+  default-approver: analista.local
+
 logging:
   level:
     root: WARN
