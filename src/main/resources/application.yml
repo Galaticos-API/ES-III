@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: soc-agent
+  main:
+    web-application-type: none
+    banner-mode: off
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${SOC_AGENT_MODEL:qwen2.5:7b}
+          temperature: 0.1
+
+soc-agent:
+  # Estrategia ativa: human-in-the-loop | plan-then-execute | react
+  planner: human-in-the-loop
+  # Abaixo desta confianca o veredito nunca e acionavel sem revisao humana
+  minimum-confidence: 0.6
+  default-approver: analista.local
+
+logging:
+  level:
+    root: WARN
+    br.fatec.esiii.socagent: INFO
