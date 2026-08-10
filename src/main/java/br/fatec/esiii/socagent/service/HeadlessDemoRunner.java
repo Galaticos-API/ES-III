@@ -54,9 +54,17 @@ public class HeadlessDemoRunner implements ApplicationRunner {
 
         if (incident.phase() == IncidentPhase.AWAITING_APPROVAL) {
             System.out.println("\n--- APROVACAO HUMANA REQUERIDA ---");
-            invoker.history();
             System.out.println("Comandos aguardando decisao: " + invoker.pendingCount());
-            triageService.approve(incident, "demo.operador");
+
+            // Por padrao o agente para aqui, como pararia em producao. A aprovacao
+            // automatica existe apenas para exercitar o fluxo completo em terminal
+            // e precisa ser pedida explicitamente.
+            if (args.containsOption("aprovar")) {
+                System.out.println("Aprovacao simulada via --aprovar");
+                triageService.approve(incident, "demo.operador");
+            } else {
+                System.out.println("Nenhuma acao executada. Use --aprovar para simular a decisao humana.");
+            }
         }
 
         System.out.println("\n================ ARVORE DE EVIDENCIAS (Composite) ================");

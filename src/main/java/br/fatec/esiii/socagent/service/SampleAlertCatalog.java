@@ -28,11 +28,23 @@ public class SampleAlertCatalog {
         return List.of(exfiltracao(), forcaBruta(), ransomware(), falsoPositivo());
     }
 
+    /**
+     * Localiza o cenario por nome completo ou por trecho.
+     *
+     * <p>A busca parcial existe porque a linha de comando quebra o argumento nos
+     * espacos: {@code --cenario=Cifragem} precisa encontrar "Cifragem em massa".
+     */
     public Scenario byName(String name) {
+        if (name == null || name.isBlank()) {
+            return scenarios().getFirst();
+        }
+        String needle = name.trim().toLowerCase();
         return scenarios().stream()
-                .filter(scenario -> scenario.name().equals(name))
+                .filter(scenario -> scenario.name().toLowerCase().contains(needle))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Cenario desconhecido: " + name));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Cenario desconhecido: '%s'. Disponiveis: %s".formatted(
+                                name, scenarios().stream().map(Scenario::name).toList())));
     }
 
     private Scenario exfiltracao() {
