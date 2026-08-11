@@ -44,14 +44,19 @@ public class EvidenceTreeCellRenderer extends DefaultTreeCellRenderer {
             setText("<html>%s <font color='%s'>%s</font></html>".formatted(
                     escape(evidence.label()), toHex(color), severity));
         } else {
-            setText("<html><b>%s</b> &nbsp;<font color='%s'>%s</font> "
-                    + "<font color='%s'>&middot; %d evidencia(s)</font></html>".formatted(
+            // Os parenteses sao necessarios: sem eles o formatted() se aplicaria
+            // apenas ao ultimo literal da concatenacao.
+            setText(("<html><b>%s</b> &nbsp;<font color='%s'>%s</font>"
+                    + " <font color='%s'>&middot; %d evidencia(s)</font></html>").formatted(
                             escape(evidence.label()), toHex(color), severity,
                             toHex(UiTheme.muted()), evidence.leafCount()));
         }
 
         setIcon(new DotIcon(color, evidence.isLeaf()));
         setBorder(javax.swing.BorderFactory.createEmptyBorder(2, 2, 2, 6));
+        // Rotulos de alerta sao longos e a arvore rola na horizontal; a dica
+        // permite ler o conteudo inteiro sem precisar rolar.
+        setToolTipText(evidence.label());
         return this;
     }
 

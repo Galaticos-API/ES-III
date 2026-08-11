@@ -5,6 +5,9 @@ import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -129,9 +132,28 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         add(root, BorderLayout.CENTER);
     }
 
+    /**
+     * Empilha os componentes em uma coluna, cada um esticado na largura e com a
+     * altura que pedir.
+     *
+     * <p>Usa GridBagLayout em vez de BoxLayout de proposito: com BoxLayout seria
+     * preciso fixar {@code maximumSize} em cada linha, e a altura preferida
+     * medida na montagem fica errada para rotulos preenchidos depois — foi o que
+     * fez a descricao do cenario desaparecer.
+     */
+    private void stack(JPanel container, int gapAbove, JComponent component) {
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = GridBagConstraints.RELATIVE;
+        constraints.weightx = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.insets = new Insets(gapAbove, 0, 0, 0);
+        container.add(component, constraints);
+    }
+
     private JComponent buildHeader() {
-        JPanel header = new JPanel();
-        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
+        JPanel header = new JPanel(new GridBagLayout());
         header.setOpaque(false);
 
         JLabel title = new JLabel("Triagem de incidentes");
@@ -154,6 +176,10 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         plannerSelector.setToolTipText("Padrao Strategy: troca a politica de planejamento em execucao");
         scenarioSelector.setToolTipText("Conjunto de alertas que sera submetido ao agente");
 
+        // Acao primaria da tela: recebe cor de destaque e vira o botao padrao,
+        // acionavel pelo Enter.
+        triageButton.setBackground(UiTheme.accent());
+        triageButton.setForeground(java.awt.Color.WHITE);
         triageButton.putClientProperty("JButton.buttonType", "roundRect");
         triageButton.setToolTipText("Executa a triagem. O agente para antes de qualquer acao destrutiva");
 
@@ -177,19 +203,17 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         progress.setVisible(false);
         progress.setPreferredSize(new Dimension(0, 4));
 
-        header.add(titleRow);
-        header.add(Box.createVerticalStrut(UiTheme.GAP_MD));
-        header.add(alignLeft(controls));
-        header.add(Box.createVerticalStrut(UiTheme.GAP_XS));
-        header.add(alignLeft(descriptionRow));
-        header.add(Box.createVerticalStrut(UiTheme.GAP_SM));
-        header.add(progress);
-        header.add(alignLeft(stepper));
+        stack(header, 0, titleRow);
+        stack(header, UiTheme.GAP_MD, controls);
+        stack(header, UiTheme.GAP_XS, descriptionRow);
+        stack(header, UiTheme.GAP_SM, progress);
+        stack(header, 0, stepper);
         return header;
     }
 
     private JComponent buildBody() {
         evidenceTree.setCellRenderer(new EvidenceTreeCellRenderer());
+        javax.swing.ToolTipManager.sharedInstance().registerComponent(evidenceTree);
         evidenceTree.setRootVisible(true);
         evidenceTree.setShowsRootHandles(true);
         evidenceTree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
@@ -226,11 +250,12 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
     }
 
     private JComponent buildFooter() {
-        JPanel footer = new JPanel();
-        footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
+        JPanel footer = new JPanel(new BorderLayout(0, UiTheme.GAP_SM));
         footer.setOpaque(false);
 
         approvalText.setFont(UiTheme.fontBody());
+        approveButton.setBackground(UiTheme.success());
+        approveButton.setForeground(java.awt.Color.WHITE);
         approveButton.putClientProperty("JButton.buttonType", "roundRect");
         approveButton.setToolTipText("Libera a fila de comandos. Padrao Command + State");
         denyButton.setToolTipText("Encerra o incidente sem executar nenhuma acao");
@@ -262,9 +287,8 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         statusRow.add(statusLeft, BorderLayout.WEST);
         statusRow.add(undoButton, BorderLayout.EAST);
 
-        footer.add(approvalBanner);
-        footer.add(Box.createVerticalStrut(UiTheme.GAP_SM));
-        footer.add(statusRow);
+        footer.add(approvalBanner, BorderLayout.NORTH);
+        footer.add(statusRow, BorderLayout.SOUTH);
         return footer;
     }
 
@@ -293,13 +317,6 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         label.setFont(UiTheme.fontLabel());
         label.setForeground(UiTheme.muted());
         return label;
-    }
-
-    private JComponent alignLeft(JComponent component) {
-        component.setAlignmentX(Component.LEFT_ALIGNMENT);
-        component.setMaximumSize(new Dimension(Integer.MAX_VALUE,
-                component.getPreferredSize().height));
-        return component;
     }
 
     // ---------------------------------------------------------------
@@ -391,6 +408,16 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
             refreshTree();
             refreshControls();
         });
+    }
+
+    /**
+     * Exibe um incidente ja triado, sem passar pelo fluxo assincrono.
+     * Visibilidade de pacote: usado pelo utilitario de captura da interface.
+     */
+    void showIncident(Incident incident) {
+        this.current = incident;
+        refreshTree();
+        refreshControls();
     }
 
     private void refreshTree() {
