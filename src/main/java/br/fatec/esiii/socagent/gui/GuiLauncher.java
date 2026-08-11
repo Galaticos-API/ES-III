@@ -54,8 +54,16 @@ public class GuiLauncher implements ApplicationRunner {
             } catch (Exception ex) {
                 log.debug("Look and feel do sistema indisponivel, usando o padrao.");
             }
-            new SocDashboardFrame(triageService, treeBuilder, catalog, eventBus).setVisible(true);
-            log.info("Painel aberto. Observadores registrados: {}", eventBus.listenerCount());
+            try {
+                new SocDashboardFrame(triageService, treeBuilder, catalog, eventBus).setVisible(true);
+                log.info("Painel aberto. Observadores registrados: {}", eventBus.listenerCount());
+            } catch (RuntimeException ex) {
+                // Em servidor sem display, forcar headless=false faz a criacao da
+                // janela falhar aqui. Registrar e seguir e melhor que derrubar o agente.
+                log.error("Nao foi possivel abrir o painel: {}. "
+                        + "Use --spring.profiles.active=headless para rodar em terminal.",
+                        ex.getMessage());
+            }
         });
     }
 }
