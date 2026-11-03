@@ -99,6 +99,6 @@ O pacote é criado em target/entrega e não contém builds, dependências, model
 
 ## Validação
 
-Em 28/10/2026: 34 testes aprovados, zero falhas e zero erros. O usuário executou o script; os relatórios Surefire foram conferidos. As 12 capturas foram inspecionadas. A inferência real com Ollama e algumas interações manuais ainda estão pendentes, conforme docs/tasks.md.
+A suíte automatizada passou com 34 testes, sem falhas nem erros. A triagem foi validada no Windows com Spring AI e Ollama (`qwen2.5:7b`). Na interface, foram conferidos os fluxos de aprovação, recusa e reversão das ações simuladas.
 
-Avisos de Java 25 sobre Mockito/agentes ou acesso nativo do FlatLaf não impediram essa execução. Falha de download do Maven deve ser tratada como acesso a dependências, não como erro do Ollama. No executor restrito do agente, Java pode encontrar AccessDenied ao resolver caminhos; a execução no PowerShell normal foi a usada na validação.
+Para rodar os testes no Windows: `.\mvnw.cmd test`.
