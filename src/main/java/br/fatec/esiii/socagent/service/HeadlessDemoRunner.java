@@ -54,7 +54,7 @@ public class HeadlessDemoRunner implements ApplicationRunner {
 
         if (incident.phase() == IncidentPhase.AWAITING_APPROVAL) {
             System.out.println("\n--- APROVACAO HUMANA REQUERIDA ---");
-            System.out.println("Comandos aguardando decisao: " + invoker.pendingCount());
+            System.out.println("Comandos aguardando decisao: " + invoker.pendingCount(incident));
 
             // Por padrao o agente para aqui, como pararia em producao. A aprovacao
             // automatica existe apenas para exercitar o fluxo completo em terminal
@@ -74,7 +74,7 @@ public class HeadlessDemoRunner implements ApplicationRunner {
         auditTrail.entries().forEach(System.out::println);
 
         System.out.println("\n================ COMANDOS EXECUTADOS (Command) ================");
-        invoker.history().forEach(record -> System.out.println("  %s -> %s | %s".formatted(
+        invoker.history(incident).forEach(record -> System.out.println("  %s -> %s | %s".formatted(
                 record.commandName(),
                 record.result().success() ? "OK" : "RECUSADO/FALHOU",
                 record.result().output())));

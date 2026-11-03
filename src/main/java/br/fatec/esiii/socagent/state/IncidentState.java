@@ -34,6 +34,10 @@ public interface IncidentState {
         throw new IllegalTransitionException(phase(), "aprovar");
     }
 
+    default IncidentState completeReview(Incident incident, String approver) {
+        throw new IllegalTransitionException(phase(), "concluir revisao");
+    }
+
     default IncidentState deny(Incident incident, String approver, String reason) {
         throw new IllegalTransitionException(phase(), "negar aprovacao");
     }

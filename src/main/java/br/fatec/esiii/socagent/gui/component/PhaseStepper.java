@@ -5,6 +5,7 @@ import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.util.List;
 
 import javax.swing.JPanel;
 
@@ -29,15 +30,22 @@ public class PhaseStepper extends JPanel {
             IncidentPhase.CLOSED};
 
     private IncidentPhase current;
+    private List<IncidentPhase> visited = List.of();
 
     public PhaseStepper() {
         setOpaque(false);
-        setPreferredSize(new Dimension(0, 56));
+        setPreferredSize(new Dimension(0, 72));
         setToolTipText("Padrao State: cada etapa e uma classe de estado; "
                 + "transicoes ilegais lancam excecao");
     }
 
     public void setPhase(IncidentPhase phase) {
+        setProgress(phase == null ? List.of() : List.of(phase));
+    }
+
+    public void setProgress(List<IncidentPhase> history) {
+        visited = List.copyOf(history);
+        IncidentPhase phase = visited.isEmpty() ? null : visited.getLast();
         this.current = phase;
         repaint();
     }
@@ -70,7 +78,7 @@ public class PhaseStepper extends JPanel {
             IncidentPhase phase = TRACK[i];
             int centerX = slot * i + slot / 2;
 
-            boolean done = activeIndex >= 0 && i < activeIndex;
+            boolean done = visited.contains(phase) && phase != current;
             boolean active = i == activeIndex;
             boolean gate = phase == IncidentPhase.AWAITING_APPROVAL;
 
@@ -85,7 +93,7 @@ public class PhaseStepper extends JPanel {
 
             // linha ligando ao proximo
             if (i < TRACK.length - 1) {
-                g2.setColor(done ? UiTheme.success() : UiTheme.border());
+                g2.setColor(done && visited.contains(TRACK[i + 1]) ? UiTheme.success() : UiTheme.border());
                 g2.fillRect(centerX + dotSize, dotY + dotSize / 2 - 1, slot - dotSize * 2, 2);
             }
 
@@ -100,6 +108,11 @@ public class PhaseStepper extends JPanel {
             int textWidth = g2.getFontMetrics().stringWidth(label);
             g2.setColor(active ? color : UiTheme.muted());
             g2.drawString(label, centerX - textWidth / 2, dotY + dotSize + 18);
+            if (current == IncidentPhase.CLOSED && !visited.contains(phase)) {
+                String skipped = "Nao realizada";
+                int width = g2.getFontMetrics().stringWidth(skipped);
+                g2.drawString(skipped, centerX - width / 2, dotY + dotSize + 34);
+            }
         }
         g2.dispose();
     }

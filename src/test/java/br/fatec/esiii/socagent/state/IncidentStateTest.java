@@ -18,10 +18,14 @@ import br.fatec.esiii.socagent.observer.AgentEventBus;
 class IncidentStateTest {
 
     private Incident novoIncidente() {
+        return novoIncidente(new AgentEventBus());
+    }
+
+    private Incident novoIncidente(AgentEventBus eventBus) {
         Alert alerta = new Alert("ALR-1", "suricata", "WKS-4471",
                 "Trafego de exfiltracao detectado", Severity.CRITICAL, Instant.now(),
                 List.of(Ioc.ip("185.220.101.7")));
-        return new Incident("INC-1", List.of(alerta), new AgentEventBus());
+        return new Incident("INC-1", List.of(alerta), eventBus);
     }
 
     private TriageVerdict verdadeiroPositivo() {
@@ -79,6 +83,33 @@ class IncidentStateTest {
         assertThat(incidente.phase()).isEqualTo(IncidentPhase.CLOSED);
         assertThat(incidente.isApproved()).isFalse();
         assertThat(incidente.allowsContainmentCommands()).isFalse();
+    }
+
+    @Test
+    void revisaoConcluidaNaoAutorizaContencao() {
+        var eventBus = new AgentEventBus();
+        Incident incidente = novoIncidente(eventBus);
+        var events = new java.util.ArrayList<br.fatec.esiii.socagent.observer.AgentEvent>();
+        eventBus.subscribe(events::add);
+        incidente.triage(TriageVerdict.needsReview("sem modelo"));
+        incidente.correlate();
+        incidente.requestApproval();
+        incidente.completeReview("analista");
+        assertThat(incidente.phase()).isEqualTo(IncidentPhase.CLOSED);
+        assertThat(incidente.phaseHistory()).doesNotContain(IncidentPhase.CONTAINING);
+        assertThat(incidente.allowsContainmentCommands()).isFalse();
+        assertThat(events).extracting(br.fatec.esiii.socagent.observer.AgentEvent::title)
+                .contains("Revisao concluida", "Incidente encerrado")
+                .doesNotContain("Contencao aprovada");
+        assertThatThrownBy(() -> incidente.completeReview("analista"))
+                .isInstanceOf(IllegalTransitionException.class);
+    }
+
+    @Test
+    void revisaoNaoPodeSerConcluidaAntesDaSolicitacao() {
+        Incident incidente = novoIncidente();
+        assertThatThrownBy(() -> incidente.completeReview("analista"))
+                .isInstanceOf(IllegalTransitionException.class);
     }
 
     @Test

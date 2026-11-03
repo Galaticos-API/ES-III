@@ -80,6 +80,18 @@ public class Incident {
         transitionTo(state.deny(this, who, reason), "contencao negada por " + who);
         eventBus.publish(AgentEvent.of(EventType.APPROVAL_DENIED, id,
                 "Contencao negada", reason));
+        eventBus.publish(AgentEvent.of(EventType.INCIDENT_CLOSED, id,
+                "Incidente encerrado", closingSummary));
+    }
+
+    /** Encerra uma revisao sem autorizar nem entrar na fase de contencao. */
+    public void completeReview(String who) {
+        transitionTo(state.completeReview(this, who), "revisao concluida por " + who);
+        eventBus.publish(AgentEvent.of(EventType.APPROVAL_GRANTED, id,
+                "Revisao concluida", "responsavel: " + who + "; sem acoes de contencao")
+                .with("reviewOnly", true));
+        eventBus.publish(AgentEvent.of(EventType.INCIDENT_CLOSED, id,
+                "Incidente encerrado", closingSummary));
     }
 
     public void close(String summary) {

@@ -4,6 +4,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 import org.springframework.stereotype.Component;
 
@@ -26,9 +28,18 @@ import br.fatec.esiii.socagent.state.Incident;
 public class CommandInvoker {
 
     private final AgentEventBus eventBus;
-    private final Deque<AgentCommand> queue = new ArrayDeque<>();
-    private final Deque<AgentCommand> undoStack = new ArrayDeque<>();
+    private final Map<String, IncidentCommands> incidents = new HashMap<>();
     private final List<ExecutionRecord> history = new ArrayList<>();
+
+    private static final class IncidentCommands {
+        final Deque<AgentCommand> queue = new ArrayDeque<>();
+        final Deque<AgentCommand> undoStack = new ArrayDeque<>();
+        final List<ExecutionRecord> history = new ArrayList<>();
+    }
+
+    private IncidentCommands commands(Incident incident) {
+        return incidents.computeIfAbsent(incident.id(), id -> new IncidentCommands());
+    }
 
     public CommandInvoker(AgentEventBus eventBus) {
         this.eventBus = eventBus;
@@ -39,7 +50,7 @@ public class CommandInvoker {
     }
 
     public void enqueue(Incident incident, AgentCommand command) {
-        queue.addLast(command);
+        commands(incident).queue.addLast(command);
         eventBus.publish(AgentEvent.of(EventType.COMMAND_QUEUED, incident.id(),
                 command.name(), command.description()));
     }
@@ -50,6 +61,7 @@ public class CommandInvoker {
      */
     public List<ExecutionRecord> executeQueue(Incident incident) {
         List<ExecutionRecord> executed = new ArrayList<>();
+        Deque<AgentCommand> queue = commands(incident).queue;
         while (!queue.isEmpty()) {
             executed.add(execute(incident, queue.pollFirst()));
         }
@@ -74,7 +86,7 @@ public class CommandInvoker {
         }
 
         if (result.success() && command.undoable()) {
-            undoStack.push(command);
+            commands(incident).undoStack.push(command);
         }
         return record(incident, command, result,
                 result.success() ? EventType.COMMAND_EXECUTED : EventType.COMMAND_FAILED);
@@ -85,15 +97,25 @@ public class CommandInvoker {
      * reverter uma contencao equivocada rapidamente vale tanto quanto aplica-la.
      */
     public ExecutionRecord undoLast(Incident incident) {
-        AgentCommand command = undoStack.poll();
+        Deque<AgentCommand> undoStack = commands(incident).undoStack;
+        AgentCommand command = undoStack.peek();
         if (command == null) {
             return new ExecutionRecord("undo", "nada a desfazer",
                     CommandResult.refused("Nenhum comando reversivel no historico"));
         }
-        CommandResult result = command.undo();
+        CommandResult result;
+        try {
+            result = command.undo();
+        } catch (RuntimeException ex) {
+            result = CommandResult.failure("Falha ao desfazer: " + ex.getMessage(), java.time.Duration.ZERO);
+        }
+        if (result.success()) {
+            undoStack.pop();
+        }
         ExecutionRecord entry = new ExecutionRecord(command.name(), "desfazer: " + command.description(), result);
         history.add(entry);
-        eventBus.publish(AgentEvent.of(EventType.COMMAND_UNDONE, incident.id(),
+        commands(incident).history.add(entry);
+        eventBus.publish(AgentEvent.of(result.success() ? EventType.COMMAND_UNDONE : EventType.COMMAND_FAILED, incident.id(),
                 command.name(), result.output()));
         return entry;
     }
@@ -102,6 +124,7 @@ public class CommandInvoker {
             CommandResult result, EventType type) {
         ExecutionRecord entry = new ExecutionRecord(command.name(), command.description(), result);
         history.add(entry);
+        commands(incident).history.add(entry);
         eventBus.publish(AgentEvent.of(type, incident.id(), command.name(), result.output())
                 .with("success", result.success()));
         return entry;
@@ -112,16 +135,31 @@ public class CommandInvoker {
     }
 
     public int pendingCount() {
-        return queue.size();
+        return incidents.values().stream().mapToInt(value -> value.queue.size()).sum();
     }
 
     public int undoableCount() {
-        return undoStack.size();
+        return incidents.values().stream().mapToInt(value -> value.undoStack.size()).sum();
+    }
+
+    public int pendingCount(Incident incident) {
+        return commands(incident).queue.size();
+    }
+
+    public int undoableCount(Incident incident) {
+        return commands(incident).undoStack.size();
+    }
+
+    public List<ExecutionRecord> history(Incident incident) {
+        return List.copyOf(commands(incident).history);
+    }
+
+    public void cancelPending(Incident incident) {
+        commands(incident).queue.clear();
     }
 
     public void reset() {
-        queue.clear();
-        undoStack.clear();
+        incidents.clear();
         history.clear();
     }
 }

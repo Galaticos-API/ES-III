@@ -1,543 +1,198 @@
-# Arquitetura e Padrões de Projeto
+# Arquitetura e padrões de projeto
 
-Agente de triagem de incidentes de segurança construído com Spring AI e modelos
-abertos executados localmente via Ollama.
+Aplicação Java desktop da categoria Security Agents. Spring AI consulta um modelo aberto pelo Ollama; a interface Swing apresenta alertas fictícios, veredito, evidências e decisão humana. Contenção e coleta são simuladas em memória.
 
-Categoria de caso de uso: **Security Agents** — investigar alertas, correlacionar
-eventos e acionar contenção, com governança estrita e aprovação humana
-obrigatória para ações críticas.
+## Visão geral
 
----
-
-## 1. Visão geral em camadas
+| Camada | Classes e pacotes | Responsabilidade |
+|---|---|---|
+| Apresentação | SocDashboardFrame, gui/component, gui/tree | Controles, eventos, árvore e detalhes selecionáveis |
+| Aplicação | IncidentTriageService, PlannerRegistry | Abrir incidente, planejar e coordenar decisão/execução |
+| Domínio e padrões | state, command, strategy, observer | Estados, ferramentas, estratégias e notificações |
+| Integrações | LlmThreatAnalyst, SimulatedContainmentGateway, MitreRepository | Modelo, simulação e catálogo MITRE local |
 
 ```mermaid
 flowchart TB
-    subgraph GUI["Camada de apresentação"]
-        Frame["SocDashboardFrame<br/><i>Swing</i>"]
-        Tree["EvidenceNode<br/><b>COMPOSITE</b>"]
-    end
-
-    subgraph APP["Camada de orquestração"]
-        Service["IncidentTriageService"]
-        Registry["PlannerRegistry"]
-    end
-
-    subgraph PATTERNS["Núcleo de domínio"]
-        State["Incident + IncidentState<br/><b>STATE</b>"]
-        Cmd["AgentCommand + CommandInvoker<br/><b>COMMAND</b>"]
-        Strat["TriagePlanner<br/><b>STRATEGY</b>"]
-        Bus["AgentEventBus<br/><b>OBSERVER</b>"]
-    end
-
-    subgraph INFRA["Infraestrutura"]
-        Llm["LlmThreatAnalyst<br/><i>Spring AI</i>"]
-        Ollama["Ollama<br/>qwen2.5:7b"]
-        Gateway["ContainmentGateway<br/><i>EDR / firewall / NAC</i>"]
-        Mitre["MitreRepository<br/><i>ATT&amp;CK offline</i>"]
-    end
-
-    Frame --> Service
-    Frame --> Tree
-    Frame -. observa .-> Bus
-    Service --> Registry
-    Registry --> Strat
-    Service --> State
-    Service --> Cmd
-    State -. publica .-> Bus
-    Cmd -. publica .-> Bus
-    Strat --> Llm
-    Llm --> Ollama
-    Cmd --> Gateway
-    Cmd --> Mitre
-    Tree --> State
+    GUI["SocDashboardFrame - Swing"] --> Service["IncidentTriageService"]
+    GUI --> Tree["EvidenceTreeBuilder - Composite"]
+    Service --> Registry["PlannerRegistry - Strategy"]
+    Service --> State["Incident - State"]
+    Service --> Invoker["CommandInvoker - Command"]
+    Registry --> Planner["TriagePlanner"]
+    Planner --> Analyst["ThreatAnalyst"]
+    Analyst --> LLM["LlmThreatAnalyst - Spring AI"]
+    LLM --> Ollama["Ollama - Qwen 2.5 7B"]
+    Invoker --> Gateway["ContainmentGateway - simulado"]
+    State --> Bus["AgentEventBus - Observer"]
+    Invoker --> Bus
+    Bus --> GUI
 ```
 
-**Regra de dependência:** o núcleo de domínio não conhece Spring AI, Swing nem
-Ollama. As setas para a infraestrutura atravessam interfaces (`ThreatAnalyst`,
-`ContainmentGateway`), o que permite testar todos os padrões sem modelo e sem
-rede — os 24 testes automatizados rodam offline.
+O diagrama de camadas resume dependências; as interfaces permitem substituir o modelo e o gateway nos testes. A correlação atual é uma fase do fluxo e organização de evidências, não uma integração com fontes externas.
 
----
+## State
 
-## 2. Onde cada padrão está
+![State: participantes centrais](uml/state.png)
 
-| Padrão | Pacote | Papel na arquitetura |
-|---|---|---|
-| **State** | `state` | Ciclo de vida do incidente; barra ação destrutiva antes da aprovação |
-| **Command** | `command` | Cada ação de resposta como objeto: enfileirável, auditável, reversível |
-| **Strategy** | `strategy` | Três políticas de planejamento intercambiáveis em tempo de execução |
-| **Observer** | `observer` | Difusão de eventos para auditoria, console e painel |
-| **Composite** | `gui.tree` | Árvore de evidências exibida na GUI |
-
----
-
-## 3. STATE — ciclo de vida do incidente
-
-### 3.1 Diagrama de classes
-
-```mermaid
-classDiagram
-    class Incident {
-        -IncidentState state
-        -List~Alert~ alerts
-        -AgentEventBus eventBus
-        +triage(TriageVerdict)
-        +correlate()
-        +requestApproval()
-        +approve(String)
-        +deny(String, String)
-        +close(String)
-        +phase() IncidentPhase
-        +allowsContainmentCommands() boolean
-        -transitionTo(IncidentState, String)
-    }
-
-    class IncidentState {
-        <<interface>>
-        +phase() IncidentPhase
-        +triage(Incident, TriageVerdict) IncidentState
-        +correlate(Incident) IncidentState
-        +requestApproval(Incident) IncidentState
-        +approve(Incident, String) IncidentState
-        +deny(Incident, String, String) IncidentState
-        +close(Incident, String) IncidentState
-        +allowsContainmentCommands() boolean
-    }
-
-    class ReceivedState
-    class TriagingState
-    class CorrelatingState
-    class AwaitingApprovalState
-    class ContainingState
-    class ClosedState
-
-    Incident o--> IncidentState : delega comportamento
-    IncidentState <|.. ReceivedState
-    IncidentState <|.. TriagingState
-    IncidentState <|.. CorrelatingState
-    IncidentState <|.. AwaitingApprovalState
-    IncidentState <|.. ContainingState
-    IncidentState <|.. ClosedState
-```
-
-**Decisão de projeto.** Todas as operações são declaradas na interface com
-implementação padrão que lança `IllegalTransitionException`. Cada estado
-concreto sobrescreve **apenas** o que permite. Consequência: transição ilegal
-deixa de ser um `if` espalhado pelo serviço e passa a ser impossível por
-construção. Não existe nenhum `switch` sobre a fase no código — acrescentar
-uma fase significa criar uma classe, sem tocar no `Incident`.
-
-### 3.2 Diagrama de máquina de estados
+`Incident` é o contexto; `IncidentState` declara operações com rejeição padrão. Os seis estados concretos são classes internas de `IncidentStates`: ReceivedState, TriagingState, CorrelatingState, AwaitingApprovalState, ContainingState e ClosedState. A imagem destaca os estados envolvidos na decisão humana.
 
 ```mermaid
 stateDiagram-v2
     [*] --> RECEIVED
     RECEIVED --> TRIAGING : triage(verdict)
-
     TRIAGING --> CORRELATING : correlate()
-    TRIAGING --> CLOSED : close() <br/><i>falso positivo</i>
-
+    TRIAGING --> CLOSED : close() falso positivo
     CORRELATING --> AWAITING_APPROVAL : requestApproval()
-    CORRELATING --> CLOSED : close() <br/><i>sem ação aplicável</i>
-
-    AWAITING_APPROVAL --> CONTAINING : approve(analista)
+    CORRELATING --> CLOSED : close() plano vazio acionavel ou leitura concluida
+    AWAITING_APPROVAL --> CONTAINING : approve(analista) com comandos
+    AWAITING_APPROVAL --> CLOSED : completeReview(analista) sem comandos
     AWAITING_APPROVAL --> CLOSED : deny(analista, motivo)
-
     CONTAINING --> CLOSED : close(resumo)
     CLOSED --> [*]
-
-    note right of AWAITING_APPROVAL
-        Barreira de governança.
-        Única transição para CONTAINING
-        exige decisão humana explícita.
-    end note
-
-    note right of CONTAINING
-        Único estado em que
-        allowsContainmentCommands()
-        devolve true.
-    end note
 ```
 
----
+Somente CONTAINING autoriza comandos que exigem aprovação. A revisão sem ações fecha diretamente, sem simular contenção. O indicador da GUI usa `phaseHistory()` e identifica fases puladas. A reversão é uma operação separada no invocador, inclusive após encerramento.
 
-## 4. COMMAND — ações de resposta
+## Command
+
+![Command: participantes centrais](uml/command.png)
+
+`AgentCommand` define execute, requiresApproval, undoable e undo. Implementações: IsolateHostCommand, BlockIpCommand, CollectForensicsCommand e LookupMitreCommand. O invocador separa filas, históricos e pilhas por incidente e consulta o State antes de comandos aprováveis. Negar cancela a fila daquele incidente.
 
 ```mermaid
 classDiagram
+    class IncidentCommands {
+        -queue
+        -undoStack
+        -history
+    }
+    class CommandInvoker {
+        -incidents
+        +enqueue(Incident, AgentCommand)
+        +executeQueue(Incident)
+        +undoLast(Incident)
+        +cancelPending(Incident)
+    }
     class AgentCommand {
         <<interface>>
-        +name() String
-        +description() String
         +execute() CommandResult
         +requiresApproval() boolean
         +undoable() boolean
         +undo() CommandResult
     }
-
-    class CommandInvoker {
-        -Deque~AgentCommand~ queue
-        -Deque~AgentCommand~ undoStack
-        -List~ExecutionRecord~ history
-        +enqueue(Incident, AgentCommand)
-        +execute(Incident, AgentCommand) ExecutionRecord
-        +executeQueue(Incident) List~ExecutionRecord~
-        +undoLast(Incident) ExecutionRecord
-    }
-
-    class IsolateHostCommand {
-        +requiresApproval() boolean
-        +undoable() boolean
-        +undo() CommandResult
-    }
-    class BlockIpCommand {
-        +requiresApproval() boolean
-        +undoable() boolean
-        +undo() CommandResult
-    }
-    class CollectForensicsCommand {
-        +execute() CommandResult
-    }
-    class LookupMitreCommand {
-        +execute() CommandResult
-    }
-
-    class ContainmentGateway {
-        <<interface>>
-        +isolateHost(String, String) String
-        +restoreHost(String) String
-        +blockIp(String, String) String
-        +unblockIp(String) String
-        +collectForensics(String) String
-    }
-
-    AgentCommand <|.. IsolateHostCommand
-    AgentCommand <|.. BlockIpCommand
-    AgentCommand <|.. CollectForensicsCommand
-    AgentCommand <|.. LookupMitreCommand
-
-    CommandInvoker o--> AgentCommand : enfileira e executa
-    CommandInvoker ..> Incident : consulta o State
-    CommandInvoker ..> AgentEventBus : publica
-
-    IsolateHostCommand --> ContainmentGateway
-    BlockIpCommand --> ContainmentGateway
-    CollectForensicsCommand --> ContainmentGateway
+    CommandInvoker *-- IncidentCommands : estado por ID
+    IncidentCommands o-- AgentCommand : fila e reversao
 ```
 
-**Três decisões que valem a defesa oral:**
+O gateway simulado altera conjuntos em memória. Uma compensação desfaz esse estado, não a rede real. Falhas de execução não interrompem a fila; o serviço consolida sucesso, falha total ou parcial. Falha de reversão preserva a ação para nova tentativa. Todo comando de contenção novo precisa declarar corretamente `requiresApproval()`; o State não descobre sozinho efeitos de um comando mal declarado.
 
-1. **Comandos são código Java, nunca texto gerado pelo modelo.** O modelo
-   escolhe *qual* comando invocar e com *quais parâmetros*; o que cada comando
-   faz é fixado em tempo de compilação.
-2. **A barreira de aprovação vive no `CommandInvoker`, não em cada comando.**
-   Um comando novo já nasce protegido — não há como esquecer de checar.
-3. **`undo()` é ação compensatória real.** Reverter uma contenção equivocada
-   rápido vale tanto quanto aplicá-la; `IsolateHostCommand.undo()` reconecta o
-   host de fato.
+## Strategy
 
----
+![Strategy: políticas intercambiáveis](uml/strategy.png)
 
-## 5. STRATEGY — políticas de planejamento
+`PlannerRegistry` mantém a estratégia ativa. `PlanThenExecutePlanner` classifica e propõe um plano completo. `ReActPlanner` alterna sugestão e observação até cinco passos, executa leituras durante o planejamento e acumula contenções para aprovação. `HumanInTheLoopPlanner` envolve o primeiro planejador e força aprovação para planos não vazios; também exerce o papel de Decorator.
 
-```mermaid
-classDiagram
-    class TriagePlanner {
-        <<interface>>
-        +id() String
-        +displayName() String
-        +plan(Incident) Plan
-    }
+`ThreatAnalyst` é a interface de análise, implementada por `LlmThreatAnalyst`. `CommandFactory` converte somente nomes de ferramenta permitidos em comandos Java; sugestões não são código executado. No ReAct atual, leituras são executadas diretamente, sem histórico de execução central do invocador: limitação conhecida, fora das correções mínimas de entrega.
 
-    class Plan {
-        <<record>>
-        +TriageVerdict verdict
-        +List~AgentCommand~ commands
-        +boolean requiresApproval
-    }
+## Observer
 
-    class PlanThenExecutePlanner {
-        +plan(Incident) Plan
-    }
-    class ReActPlanner {
-        -int MAX_STEPS
-        +plan(Incident) Plan
-    }
-    class HumanInTheLoopPlanner {
-        -TriagePlanner delegate
-        +plan(Incident) Plan
-    }
+![Observer: barramento e consumidores](uml/observer.png)
 
-    class ThreatAnalyst {
-        <<interface>>
-        +classify(Incident) TriageVerdict
-        +proposePlan(Incident) List~ProposedAction~
-        +proposeNext(Incident, List~String~) Optional~ProposedAction~
-    }
+`AgentEventBus` mantém `AgentEventListener`. `EventListenerRegistrar` inscreve auditoria e console; a GUI se inscreve ao abrir e se remove ao fechar. `AgentEvent` transporta tipo, incidentId, título, detalhe, instante e atributos.
 
-    class CommandFactory {
-        -ALLOWED_TOOLS Set~String~
-        +create(ProposedAction, String) Optional~AgentCommand~
-    }
+Falhas de um ouvinte são isoladas para os demais receberem o evento. `AuditTrailListener` mantém registros em memória; não existe persistência. A GUI atualiza componentes pela EDT e preserva seus eventos quando o tema muda. Revisão concluída, aprovação e negação são apresentadas de forma distinta.
 
-    class LlmThreatAnalyst {
-        -ChatClient chatClient
-    }
+## Composite na GUI
 
-    class PlannerRegistry {
-        -TriagePlanner active
-        +activate(String)
-        +available() List~TriagePlanner~
-    }
+![Composite: grupos e folhas](uml/composite.png)
 
-    TriagePlanner <|.. PlanThenExecutePlanner
-    TriagePlanner <|.. ReActPlanner
-    TriagePlanner <|.. HumanInTheLoopPlanner
-    HumanInTheLoopPlanner o--> PlanThenExecutePlanner : decora
-    TriagePlanner ..> Plan : produz
-
-    PlanThenExecutePlanner --> ThreatAnalyst
-    ReActPlanner --> ThreatAnalyst
-    ThreatAnalyst <|.. LlmThreatAnalyst
-
-    PlanThenExecutePlanner --> CommandFactory
-    ReActPlanner --> CommandFactory
-    CommandFactory ..> AgentCommand : traduz
-
-    PlannerRegistry o--> TriagePlanner : seleciona em runtime
-```
-
-**`HumanInTheLoopPlanner` é Strategy que também decora** — envolve outro
-planejador e força aprovação sem duplicar a lógica de planejamento.
-
-**`CommandFactory` é o único ponto onde saída de modelo vira ação**, e opera por
-lista de permissão. Um modelo que alucine `delete_all_logs` não encontra
-tradutor: a ação é descartada com registro em log. Existe teste automatizado
-para esse caso.
-
-**`ReActPlanner` executa apenas comandos de leitura durante o ciclo** e acumula
-os destrutivos para depois da aprovação. Sem essa separação, o ciclo adaptativo
-contornaria a barreira de governança.
-
----
-
-## 6. OBSERVER — difusão de eventos
-
-```mermaid
-classDiagram
-    class AgentEventBus {
-        -List~AgentEventListener~ listeners
-        +subscribe(AgentEventListener)
-        +unsubscribe(AgentEventListener)
-        +publish(AgentEvent)
-    }
-
-    class AgentEventListener {
-        <<interface>>
-        +onEvent(AgentEvent)
-        +supports(AgentEvent) boolean
-        +listenerName() String
-    }
-
-    class AgentEvent {
-        <<record>>
-        +EventType type
-        +String incidentId
-        +String title
-        +Instant occurredAt
-    }
-
-    class AuditTrailListener {
-        +entries() List~String~
-    }
-    class ConsoleListener {
-        +onEvent(AgentEvent)
-    }
-    class SocDashboardFrame {
-        +onEvent(AgentEvent)
-    }
-    class EventListenerRegistrar {
-        +EventListenerRegistrar(AgentEventBus, List)
-    }
-
-    AgentEventBus o--> AgentEventListener
-    AgentEventBus ..> AgentEvent : difunde
-    AgentEventListener <|.. AuditTrailListener
-    AgentEventListener <|.. ConsoleListener
-    AgentEventListener <|.. SocDashboardFrame
-    EventListenerRegistrar ..> AgentEventBus : registra
-
-    Incident ..> AgentEventBus : transições
-    CommandInvoker ..> AgentEventBus : execuções
-```
-
-**Falha de um observador nunca interrompe a difusão para os demais.** Em
-segurança, perder a trilha de auditoria por causa de um erro de renderização na
-GUI seria inaceitável — o barramento captura a exceção, registra e continua.
-
-A estrutura usa `CopyOnWriteArrayList` porque a GUI se inscreve pela *Event
-Dispatch Thread* do Swing enquanto o agente publica de uma thread de trabalho.
-
----
-
-## 7. COMPOSITE — árvore de evidências na GUI
+`EvidenceNode` fornece children, add, leafCount, highestSeverity, depth e render. `EvidenceGroup` contém outros EvidenceNode; `EvidenceLeaf` recusa filhos. `EvidenceTreeBuilder` monta os grupos e a GUI converte a estrutura para `DefaultMutableTreeNode`.
 
 ```mermaid
 classDiagram
     class EvidenceNode {
         <<interface>>
-        +label() String
-        +severity() Severity
-        +children() List~EvidenceNode~
-        +isLeaf() boolean
+        +children()
         +add(EvidenceNode)
         +leafCount() int
         +highestSeverity() Severity
-        +depth() int
-        +render(int) String
     }
-
-    class EvidenceLeaf {
-        <<record>>
-        +String label
-        +Severity severity
-        +children() List~EvidenceNode~
-    }
-
     class EvidenceGroup {
-        -List~EvidenceNode~ children
+        -children
         +add(EvidenceNode)
-        +with(EvidenceNode) EvidenceGroup
     }
-
+    class EvidenceLeaf {
+        +label() String
+        +severity() Severity
+    }
     class EvidenceTreeBuilder {
         +build(Incident) EvidenceNode
     }
-
-    class SocDashboardFrame {
-        -toSwingNode(EvidenceNode) TreeNode
-    }
-
-    EvidenceNode <|.. EvidenceLeaf
     EvidenceNode <|.. EvidenceGroup
-    EvidenceGroup o--> EvidenceNode : filhos
+    EvidenceNode <|.. EvidenceLeaf
+    EvidenceGroup o-- EvidenceNode : filhos
     EvidenceTreeBuilder ..> EvidenceGroup : monta
-    SocDashboardFrame ..> EvidenceNode : renderiza no JTree
+    EvidenceTreeBuilder ..> EvidenceLeaf : monta
 ```
 
-Estrutura produzida em tempo de execução:
+A árvore mostra alertas, indicadores, técnicas, veredito, decisão e conclusão. Selecionar uma evidência apresenta seu texto completo abaixo; clicar em um evento apresenta seu detalhe, que pode ser copiado.
 
-```
-+ INC-0001 | Encerrado | host WKS-4471 [CRITICAL]
-  + [ALR-1001] Volume de saída 480 MB para destino externo (suricata) [CRITICAL]
-    - IP: 185.220.101.7 [CRITICAL]
-  + [ALR-1002] Conexão TLS com certificado autoassinado (zeek) [HIGH]
-    - IP: 185.220.101.7 [HIGH]
-    - PROCESS: rundll32.exe [HIGH]
-  + Técnicas MITRE ATT&CK [MEDIUM]
-    - T1041 - Exfiltration Over C2 Channel (Exfiltration) [MEDIUM]
-  + Veredito: TRUE_POSITIVE (confiança 0,90) [INFO]
-    - <justificativa produzida pelo modelo> [INFO]
-  + Decisão humana [INFO]
-    - Aprovado por demo.operador [INFO]
-```
+## Sequência de triagem
 
-**As operações recursivas são métodos padrão da interface**, então folha e
-composto respondem identicamente a `leafCount()`, `highestSeverity()`,
-`depth()` e `render()`. A severidade agrega de baixo para cima: um grupo
-marcado como `LOW` contendo um IOC `CRITICAL` aparece como `CRITICAL` no
-painel, sem que ninguém recalcule isso manualmente.
-
-**A folha recusa filhos** lançando `UnsupportedOperationException`. É a variante
-*transparente* do padrão descrita no GoF: interface uniforme, com a segurança
-verificada em tempo de execução.
-
----
-
-## 8. Fluxo completo — diagrama de sequência
+Fluxo com quatro participantes; consultas ao modelo ocorrem dentro de TriagePlanner. Eventos e execução estão no diagrama seguinte.
 
 ```mermaid
 sequenceDiagram
-    actor Analista
     participant GUI as SocDashboardFrame
     participant Svc as IncidentTriageService
-    participant Plan as TriagePlanner<br/>(STRATEGY)
-    participant Llm as LlmThreatAnalyst
-    participant Inc as Incident<br/>(STATE)
-    participant Inv as CommandInvoker<br/>(COMMAND)
-    participant Bus as AgentEventBus<br/>(OBSERVER)
-
-    Analista->>GUI: seleciona cenário e estratégia
+    participant Inc as Incident
+    participant Plan as TriagePlanner
+    GUI->>Svc: open(alerts)
+    Svc->>Inc: new Incident(id, alerts, bus)
+    Svc-->>GUI: incident
     GUI->>Svc: triage(incident)
-    Svc->>Inc: open()
-    Inc-->>Bus: INCIDENT_CREATED
-
     Svc->>Plan: plan(incident)
-    Plan->>Llm: classify(incident)
-    Llm-->>Plan: TriageVerdict
-    Plan->>Llm: proposePlan(incident)
-    Llm-->>Plan: lista de ações propostas
-    Note over Plan: CommandFactory traduz<br/>por lista de permissão
     Plan-->>Svc: Plan(verdict, commands, requiresApproval)
-    Svc-->>Bus: PLAN_CREATED
-
     Svc->>Inc: triage(verdict)
-    Inc-->>Bus: STATE_CHANGED (Recebido → Em triagem)
-    Svc->>Inc: correlate()
-    Inc-->>Bus: STATE_CHANGED (→ Correlacionando)
-
-    Svc->>Inv: enqueue(comandos)
-    Inv-->>Bus: COMMAND_QUEUED (×N)
-
-    Svc->>Inc: requestApproval()
-    Inc-->>Bus: APPROVAL_REQUESTED
-    Bus-->>GUI: habilita botão "Aprovar"
-
-    Note over Analista,Inv: O agente para aqui.<br/>Nenhuma ação destrutiva ocorreu.
-
-    Analista->>GUI: Aprovar contenção
-    GUI->>Svc: approve(incident, analista)
-    Svc->>Inc: approve(analista)
-    Inc-->>Bus: STATE_CHANGED (→ Em contenção)
-
-    Svc->>Inv: executeQueue(incident)
-    Inv->>Inc: allowsContainmentCommands()?
-    Inc-->>Inv: true
-    Inv-->>Bus: COMMAND_EXECUTED (×N)
-
-    Svc->>Inc: close(resumo)
-    Inc-->>Bus: INCIDENT_CLOSED
-    Bus-->>GUI: atualiza árvore e log
+    alt falso positivo
+        Svc->>Inc: close(justificativa)
+    else aprofundar
+        Svc->>Inc: correlate()
+        Note over Svc,Inc: Plano vazio acionavel encerra; leitura acionavel pode executar diretamente
+        Svc->>Inc: requestApproval() quando houver decisao pendente
+    end
 ```
 
-O ponto central do diagrama é a pausa antes da aprovação. Se o analista negar,
-`deny()` leva direto a `CLOSED` e a fila **nunca** é executada.
+## Sequência de decisão humana
 
----
+```mermaid
+sequenceDiagram
+    participant Svc as IncidentTriageService
+    participant Inc as Incident
+    participant Inv as CommandInvoker
+    participant Bus as AgentEventBus
+    alt aprovar plano com comandos
+        Svc->>Inc: approve(analista)
+        Inc-->>Bus: APPROVAL_GRANTED
+        Svc->>Inv: executeQueue(incident)
+        Inv->>Inc: allowsContainmentCommands()
+        Inv-->>Bus: COMMAND_EXECUTED ou COMMAND_FAILED
+        Inv-->>Svc: resultados
+        Svc->>Inc: close(resumo dos resultados)
+        Inc-->>Bus: INCIDENT_CLOSED
+    else concluir revisao sem comandos
+        Svc->>Inc: completeReview(analista)
+        Inc-->>Bus: APPROVAL_GRANTED com reviewOnly
+        Inc-->>Bus: INCIDENT_CLOSED
+    else negar
+        Svc->>Inc: deny(analista, motivo)
+        Inc-->>Bus: APPROVAL_DENIED e INCIDENT_CLOSED
+        Svc->>Inv: cancelPending(incident)
+    end
+```
 
-## 9. Verificação da barreira de governança
+## Evidência e limites
 
-Dois mecanismos independentes protegem a mesma invariante — nenhuma ação
-destrutiva sem decisão humana:
+Em 28/10/2026, os relatórios Surefire confirmam 34 testes aprovados, zero falhas e zero erros. O usuário executou `verificar-interface.ps1`, gerando 12 capturas com analista fixo. As 12 imagens foram inspecionadas: estados vazio, aguardando aprovação, encerrado, revisão sem ações, negado e falso positivo, nos dois temas. Isso valida a renderização desses estados; não equivale a testar todos os cliques nem inferência real.
 
-| Camada | Mecanismo | Teste |
-|---|---|---|
-| State | `AwaitingApprovalState` é a única porta para `CONTAINING` | `IncidentStateTest.contencaoExigeAprovacao` |
-| Command | `CommandInvoker` recusa comando aprovável fora da fase de contenção | `CommandInvokerTest.recusaSemAprovacao` |
-
-A redundância é intencional: se um planejador futuro esquecer de marcar
-`requiresApproval`, o State ainda barra; se um estado novo permitir a transição
-por engano, o Invoker ainda recusa.
-
----
-
-## 10. Padrões adicionais presentes
-
-Além dos cinco exigidos, a arquitetura usa:
-
-- **Decorator** — `HumanInTheLoopPlanner` envolve outro planejador
-- **Factory** — `CommandFactory` traduz sugestão em comando por lista de permissão
-- **Repository** — `MitreRepository` encapsula a base ATT&CK
-- **Ports and Adapters** — `ThreatAnalyst` e `ContainmentGateway` isolam modelo e infraestrutura
-- **Injeção de dependência** — todos os componentes são beans Spring
+As cinco imagens UML foram geradas localmente por `gerar-uml.py` e mostram participantes centrais. Os blocos Mermaid complementam os fluxos. Para regenerar as imagens, usar Python com Pillow e fontes Arial no Windows; esse requisito é apenas da documentação, não da aplicação.

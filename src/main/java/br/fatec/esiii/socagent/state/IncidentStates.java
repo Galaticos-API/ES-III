@@ -94,6 +94,13 @@ public final class IncidentStates {
         }
 
         @Override
+        public IncidentState completeReview(Incident incident, String approver) {
+            incident.recordApproval(approver, true, "Revisao concluida sem acoes de contencao");
+            incident.recordClosure("Revisao humana concluida sem acoes de contencao");
+            return CLOSED;
+        }
+
+        @Override
         public IncidentState deny(Incident incident, String approver, String reason) {
             incident.recordApproval(approver, false, reason);
             incident.recordClosure("Contencao negada por " + approver + ": " + reason);

@@ -22,9 +22,8 @@ import br.fatec.esiii.socagent.service.SampleAlertCatalog;
  *
  * <p>Alternar tema em Swing exige reinstalar o look and feel. Em vez de tentar
  * atualizar cada componente ja criado — o que deixa cores antigas presas em
- * elementos desenhados manualmente — a janela e recriada. O incidente em
- * andamento nao e preservado, e a troca de tema e uma acao deliberada do
- * operador, nao algo que ocorra no meio de uma triagem.
+ * elementos desenhados manualmente - a janela e recriada. O incidente,
+ * cenario e eventos sao preservados. A troca fica bloqueada durante a triagem.
  */
 @Component
 @Profile("!headless")
@@ -63,11 +62,15 @@ public class GuiLauncher implements ApplicationRunner {
     private void openWindow() {
         try {
             UiTheme.install(darkTheme);
+            SocDashboardFrame.ViewState view = frame == null ? null : frame.captureView();
             if (frame != null) {
                 frame.dispose();
             }
             frame = new SocDashboardFrame(triageService, treeBuilder, catalog, eventBus,
                     this::toggleTheme);
+            if (view != null) {
+                frame.restoreView(view);
+            }
             frame.setVisible(true);
             log.info("Painel aberto no tema {}. Observadores registrados: {}",
                     darkTheme ? "escuro" : "claro", eventBus.listenerCount());

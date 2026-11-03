@@ -68,7 +68,11 @@ public class IncidentTriageService {
         incident.correlate();
 
         if (plan.isEmpty()) {
-            incident.close("Nenhuma acao aplicavel: " + plan.verdict().rationale());
+            if (!plan.verdict().isActionable(properties.minimumConfidence())) {
+                incident.requestApproval();
+            } else {
+                incident.close("Nenhuma acao aplicavel: " + plan.verdict().rationale());
+            }
             return plan;
         }
 
@@ -79,22 +83,39 @@ public class IncidentTriageService {
         } else {
             // Plano composto apenas por acoes de leitura: o Invoker ja recusaria
             // qualquer comando destrutivo que escapasse ate aqui.
-            invoker.executeQueue(incident);
-            incident.close("Acoes de leitura concluidas sem necessidade de contencao");
+            closeAfterExecution(incident, invoker.executeQueue(incident));
         }
         return plan;
     }
 
     /** Aprova o plano pendente e executa a contencao. */
     public void approve(Incident incident, String approver) {
-        incident.approve(approver == null ? properties.defaultApprover() : approver);
-        invoker.executeQueue(incident);
-        incident.close("Contencao concluida e evidencias preservadas");
+        String who = approver == null ? properties.defaultApprover() : approver;
+        if (invoker.pendingCount(incident) == 0) {
+            incident.completeReview(who);
+            return;
+        }
+        incident.approve(who);
+        closeAfterExecution(incident, invoker.executeQueue(incident));
+    }
+
+    private void closeAfterExecution(Incident incident, List<CommandInvoker.ExecutionRecord> results) {
+        long successes = results.stream().filter(entry -> entry.result().success()).count();
+        if (results.isEmpty()) {
+            incident.close("Revisao humana concluida sem acoes de contencao");
+        } else if (successes == results.size()) {
+            incident.close("Execucao concluida: %d comando(s) com sucesso".formatted(successes));
+        } else {
+            incident.close("%s: %d sucesso(s), %d falha(s)".formatted(
+                    successes == 0 ? "Execucao falhou" : "Execucao parcial",
+                    successes, results.size() - successes));
+        }
     }
 
     /** Nega o plano pendente; o incidente e encerrado sem qualquer acao. */
     public void deny(Incident incident, String approver, String reason) {
         incident.deny(approver == null ? properties.defaultApprover() : approver, reason);
+        invoker.cancelPending(incident);
     }
 
     /** Reverte a ultima contencao aplicada. */

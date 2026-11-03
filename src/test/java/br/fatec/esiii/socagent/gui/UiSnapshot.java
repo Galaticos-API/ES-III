@@ -70,7 +70,10 @@ public final class UiSnapshot {
     private enum Estado {
         VAZIO,
         AGUARDANDO_APROVACAO,
-        ENCERRADO
+        ENCERRADO,
+        REVISAO,
+        NEGADO,
+        FALSO_POSITIVO
     }
 
     private static void render(String outputDir, boolean dark, Estado estado) throws Exception {
@@ -80,7 +83,30 @@ public final class UiSnapshot {
         var gateway = new SimulatedContainmentGateway();
         var mitre = new MitreRepository();
         var factory = new CommandFactory(gateway, mitre);
-        var planner = new PlanThenExecutePlanner(new AnalistaFixo(), factory);
+        ThreatAnalyst analyst = switch (estado) {
+            case REVISAO -> new AnalistaFixo() {
+                @Override
+                public TriageVerdict classify(Incident incident) {
+                    return TriageVerdict.needsReview("O modelo nao conseguiu classificar: "
+                            + "falha de comunicacao com o servidor local. Esta mensagem longa "
+                            + "pode ser lida e copiada no painel de detalhes da evidencia selecionada.");
+                }
+
+                @Override
+                public List<ProposedAction> proposePlan(Incident incident) {
+                    return List.of();
+                }
+            };
+            case FALSO_POSITIVO -> new AnalistaFixo() {
+                @Override
+                public TriageVerdict classify(Incident incident) {
+                    return new TriageVerdict(TriageVerdict.Classification.FALSE_POSITIVE, 0.95,
+                            "Atividade de backup autorizada", List.of());
+                }
+            };
+            default -> new AnalistaFixo();
+        };
+        var planner = new PlanThenExecutePlanner(analyst, factory);
         var properties = new AgentProperties("plan-then-execute", 0.6, "analista.local");
         var registry = new PlannerRegistry(List.of(planner), properties);
         var invoker = new CommandInvoker(bus);
@@ -107,8 +133,10 @@ public final class UiSnapshot {
         if (estado != Estado.VAZIO) {
             incident = service.open(catalog.scenarios().getFirst().alerts());
             service.triage(incident);
-            if (estado == Estado.ENCERRADO) {
+            if (estado == Estado.ENCERRADO || estado == Estado.REVISAO) {
                 service.approve(incident, "analista.turno1");
+            } else if (estado == Estado.NEGADO) {
+                service.deny(incident, "analista.turno1", "Operacao nao autorizada");
             }
         }
 
@@ -142,7 +170,7 @@ public final class UiSnapshot {
     }
 
     /** Analista deterministico: nenhuma chamada de rede, resultado sempre igual. */
-    private static final class AnalistaFixo implements ThreatAnalyst {
+    private static class AnalistaFixo implements ThreatAnalyst {
 
         @Override
         public TriageVerdict classify(Incident incident) {

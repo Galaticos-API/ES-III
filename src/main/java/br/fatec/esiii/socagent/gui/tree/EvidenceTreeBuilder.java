@@ -59,12 +59,20 @@ public class EvidenceTreeBuilder {
 
         incident.approver().ifPresent(approver -> {
             EvidenceGroup approval = new EvidenceGroup("Decisao humana", Severity.INFO);
+            String decision = !incident.isApproved() ? "Negado"
+                    : !incident.phaseHistory().contains(br.fatec.esiii.socagent.state.IncidentPhase.CONTAINING)
+                            ? "Revisao concluida" : "Aprovado";
             approval.add(EvidenceLeaf.ofNote("%s por %s"
-                    .formatted(incident.isApproved() ? "Aprovado" : "Negado", approver)));
+                    .formatted(decision, approver)));
             incident.approvalReason().ifPresent(reason -> approval.add(EvidenceLeaf.ofNote(reason)));
             root.add(approval);
         });
 
+        incident.closingSummary().ifPresent(summary -> {
+            EvidenceGroup conclusion = new EvidenceGroup("Resultado da execucao / revisao", Severity.INFO);
+            conclusion.add(EvidenceLeaf.ofNote(summary));
+            root.add(conclusion);
+        });
         return root;
     }
 }

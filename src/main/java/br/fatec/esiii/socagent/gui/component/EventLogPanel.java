@@ -14,6 +14,10 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.Scrollable;
 import javax.swing.SwingUtilities;
+import javax.swing.JTextArea;
+import javax.swing.JSplitPane;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 
 import br.fatec.esiii.socagent.gui.theme.UiTheme;
 import br.fatec.esiii.socagent.observer.AgentEvent;
@@ -36,6 +40,7 @@ public class EventLogPanel extends JPanel {
     private final JPanel rows = new JPanel();
     private final JScrollPane scroll;
     private final JLabel emptyState = new JLabel("Nenhum evento ainda. Inicie uma triagem.");
+    private final JTextArea details = new JTextArea(4, 20);
 
     public EventLogPanel() {
         setLayout(new BorderLayout());
@@ -63,7 +68,16 @@ public class EventLogPanel extends JPanel {
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.getVerticalScrollBar().setUnitIncrement(16);
-        add(scroll, BorderLayout.CENTER);
+        details.setEditable(false);
+        details.setLineWrap(true);
+        details.setWrapStyleWord(true);
+        details.setFont(UiTheme.fontBody());
+        details.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+        details.setText("Clique em um evento para ler e copiar o texto completo.");
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, scroll, new JScrollPane(details));
+        split.setResizeWeight(0.78);
+        split.setBorder(BorderFactory.createEmptyBorder());
+        add(split, BorderLayout.CENTER);
     }
 
     public void append(AgentEvent event) {
@@ -82,6 +96,7 @@ public class EventLogPanel extends JPanel {
     }
 
     public void clear() {
+        details.setText("Clique em um evento para ler e copiar o texto completo.");
         rows.removeAll();
         emptyState.setVisible(true);
         rows.add(emptyState);
@@ -116,6 +131,21 @@ public class EventLogPanel extends JPanel {
         text.setToolTipText(detail);
         text.setMinimumSize(new Dimension(0, 0));
 
+        MouseAdapter select = new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent click) {
+                details.setText(TIME.format(event.occurredAt()) + " | " + event.incidentId()
+                        + " | " + event.type() + "\n" + detail);
+                details.setCaretPosition(0);
+            }
+        };
+        row.addMouseListener(select);
+        text.addMouseListener(select);
+        prefix.addMouseListener(select);
+        for (Component component : prefix.getComponents()) {
+            component.addMouseListener(select);
+        }
+
         row.add(prefix, BorderLayout.WEST);
         row.add(text, BorderLayout.CENTER);
         return row;
@@ -129,10 +159,11 @@ public class EventLogPanel extends JPanel {
             case PLAN_CREATED -> "PLANO";
             case COMMAND_QUEUED -> "NA FILA";
             case COMMAND_EXECUTED -> "EXECUTADO";
-            case COMMAND_FAILED -> "RECUSADO";
+            case COMMAND_FAILED -> "FALHA";
             case COMMAND_UNDONE -> "DESFEITO";
             case APPROVAL_REQUESTED -> "APROVACAO";
-            case APPROVAL_GRANTED -> "APROVADO";
+            case APPROVAL_GRANTED -> Boolean.TRUE.equals(event.attributes().get("reviewOnly"))
+                    ? "REVISAO" : "APROVADO";
             case APPROVAL_DENIED -> "NEGADO";
             case INCIDENT_CLOSED -> "ENCERRADO";
         };

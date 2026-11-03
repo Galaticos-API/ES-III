@@ -23,6 +23,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JToggleButton;
 import javax.swing.JTree;
+import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -70,12 +71,15 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
     private final PhaseStepper stepper = new PhaseStepper();
     private final EventLogPanel eventLog = new EventLogPanel();
     private final JTree evidenceTree = new JTree(new DefaultMutableTreeNode());
+    private final JTextArea evidenceDetails = new JTextArea(4, 20);
     private final JProgressBar progress = new JProgressBar();
 
     private final JButton triageButton = new JButton("Triar incidente");
     private final JButton approveButton = new JButton("Aprovar contencao");
     private final JButton denyButton = new JButton("Negar");
     private final JButton undoButton = new JButton("Desfazer ultima acao");
+    private final JToggleButton themeToggle = new JToggleButton();
+    private final java.util.List<AgentEvent> recentEvents = new java.util.ArrayList<>();
 
     private final JPanel approvalBanner = new JPanel(new BorderLayout(UiTheme.GAP_MD, 0));
     private final JLabel approvalText = new JLabel();
@@ -88,6 +92,8 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
     private final JPanel treeArea = new JPanel(new CardLayout());
 
     private transient Incident current;
+    private boolean busy;
+    private String triageFailure;
 
     public SocDashboardFrame(IncidentTriageService triageService, EvidenceTreeBuilder treeBuilder,
             SampleAlertCatalog catalog, AgentEventBus eventBus, Runnable onToggleTheme) {
@@ -159,7 +165,7 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         JLabel title = new JLabel("Triagem de incidentes");
         title.setFont(UiTheme.fontTitle());
 
-        JToggleButton themeToggle = new JToggleButton(UiTheme.isDark() ? "Tema claro" : "Tema escuro");
+        themeToggle.setText(UiTheme.isDark() ? "Tema claro" : "Tema escuro");
         themeToggle.setToolTipText("Alterna entre tema claro e escuro");
         themeToggle.addActionListener(event -> onToggleTheme.run());
 
@@ -234,9 +240,28 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         treeArea.add(treeEmptyState, CARD_EMPTY);
         treeArea.add(treeScroll, CARD_TREE);
 
+        evidenceDetails.setEditable(false);
+        evidenceDetails.setLineWrap(true);
+        evidenceDetails.setWrapStyleWord(true);
+        evidenceDetails.setFont(UiTheme.fontBody());
+        evidenceDetails.setText("Selecione uma evidencia para ler e copiar o texto completo.");
+        evidenceDetails.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+        evidenceTree.addTreeSelectionListener(event -> {
+            Object selected = evidenceTree.getLastSelectedPathComponent();
+            if (selected instanceof DefaultMutableTreeNode node
+                    && node.getUserObject() instanceof EvidenceNode evidence) {
+                evidenceDetails.setText(evidence.label());
+                evidenceDetails.setCaretPosition(0);
+            }
+        });
+        JSplitPane evidencePane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                treeArea, new JScrollPane(evidenceDetails));
+        evidencePane.setResizeWeight(0.78);
+        evidencePane.setBorder(BorderFactory.createEmptyBorder());
+
         JPanel left = card("Arvore de evidencias",
                 "Padrao Composite: grupos e folhas respondem a mesma interface",
-                treeArea);
+                evidencePane);
 
         JPanel right = card("Registro de eventos",
                 "Padrao Observer: o painel e um observador inscrito no barramento",
@@ -363,6 +388,7 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
      */
     private void runTriage() {
         var scenario = catalog.byName((String) scenarioSelector.getSelectedItem());
+        triageFailure = null;
         setBusy(true);
 
         new SwingWorker<Incident, Void>() {
@@ -378,7 +404,8 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
                 try {
                     current = get();
                 } catch (Exception ex) {
-                    statusLabel.setText("Falha na triagem: " + ex.getMessage());
+                    Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                    triageFailure = "Falha na triagem: " + cause.getMessage();
                 } finally {
                     setBusy(false);
                     refreshAll();
@@ -394,9 +421,32 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
     @Override
     public void onEvent(AgentEvent event) {
         SwingUtilities.invokeLater(() -> {
+            if (recentEvents.size() >= 400) {
+                recentEvents.removeFirst();
+            }
+            recentEvents.add(event);
             eventLog.append(event);
             refreshControls();
         });
+    }
+
+    /** Estado da apresentacao preservado ao recriar a janela para trocar o tema. */
+    record ViewState(Incident incident, String scenario, java.util.List<AgentEvent> events) { }
+
+    ViewState captureView() {
+        return new ViewState(current, (String) scenarioSelector.getSelectedItem(),
+                java.util.List.copyOf(recentEvents));
+    }
+
+    void restoreView(ViewState view) {
+        scenarioSelector.setSelectedItem(view.scenario());
+        recentEvents.clear();
+        recentEvents.addAll(view.events());
+        eventLog.clear();
+        view.events().forEach(eventLog::append);
+        if (view.incident() != null) {
+            showIncident(view.incident());
+        }
     }
 
     // ---------------------------------------------------------------
@@ -425,6 +475,7 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
             return;
         }
         EvidenceNode root = treeBuilder.build(current);
+        evidenceDetails.setText("Selecione uma evidencia para ler e copiar o texto completo.");
         evidenceTree.setModel(new DefaultTreeModel(toSwingNode(root)));
         for (int row = 0; row < evidenceTree.getRowCount(); row++) {
             evidenceTree.expandRow(row);
@@ -448,35 +499,47 @@ public class SocDashboardFrame extends JFrame implements AgentEventListener {
         IncidentPhase phase = hasIncident ? current.phase() : null;
         boolean awaiting = phase == IncidentPhase.AWAITING_APPROVAL;
 
-        stepper.setPhase(phase);
-        approveButton.setEnabled(awaiting);
-        denyButton.setEnabled(awaiting);
-        undoButton.setEnabled(hasIncident && triageService.invoker().undoableCount() > 0);
+        stepper.setProgress(hasIncident ? current.phaseHistory() : java.util.List.of());
+        approveButton.setText(awaiting && triageService.invoker().pendingCount(current) == 0 ? "Concluir revisao" : "Aprovar contencao");
+        triageButton.setEnabled(!busy && !awaiting);
+        approveButton.setEnabled(!busy && awaiting);
+        denyButton.setEnabled(!busy && awaiting);
+        undoButton.setEnabled(!busy && hasIncident && triageService.invoker().undoableCount(current) > 0);
 
         approvalBanner.setVisible(awaiting);
         if (awaiting) {
             approvalText.setText("<html><b>Aprovacao humana requerida.</b> "
-                    + "%d comando(s) aguardam decisao. Nada foi executado.</html>"
-                    .formatted(triageService.invoker().pendingCount()));
+                    + "%d comando(s) aguardam decisao. Nenhuma contencao foi executada.</html>"
+                    .formatted(triageService.invoker().pendingCount(current)));
         }
 
         if (hasIncident) {
             severityChip.setVisible(true);
             severityChip.update(current.highestSeverity().name(),
                     UiTheme.severityColor(current.highestSeverity()));
+            statusLabel.setToolTipText(current.closingSummary().orElse("Incidente em andamento"));
             statusLabel.setText("%s  ·  host %s  ·  %d comando(s) reversivel(is)".formatted(
-                    current.id(), current.affectedHost(), triageService.invoker().undoableCount()));
+                    current.id(), current.affectedHost(), triageService.invoker().undoableCount(current)));
         } else {
             severityChip.setVisible(false);
             statusLabel.setText("Pronto");
         }
+        if (busy) {
+            statusLabel.setText("Consultando o modelo de linguagem...");
+        } else if (triageFailure != null) {
+            statusLabel.setText(triageFailure);
+            statusLabel.setToolTipText(triageFailure);
+        }
     }
 
     private void setBusy(boolean busy) {
+        this.busy = busy;
         progress.setVisible(busy);
         triageButton.setEnabled(!busy);
         scenarioSelector.setEnabled(!busy);
         plannerSelector.setEnabled(!busy);
+        themeToggle.setEnabled(!busy);
+        refreshControls();
         if (busy) {
             statusLabel.setText("Consultando o modelo de linguagem...");
         }
