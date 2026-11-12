@@ -19,7 +19,7 @@ Cada integrante registra, na pasta `engenharia3` do seu repositório individual,
 | Heitor Silva | [heitors1337/bertoti](https://github.com/heitors1337/bertoti) |
 | Cauan Gabriel | [LoadCG/bertoti](https://github.com/LoadCG/bertoti) |
 | Rafael Matesco | A confirmar |
-| Victor Hugo | A confirmar |
+| Victor Hugo |  [vitorpdim/pdim](https://github.com/vitorpdim/bertoti) |
 
 ## Requisitos
 
