@@ -15,7 +15,7 @@ Cada integrante registra, na pasta `engenharia3` do seu repositório individual,
 | Gabriel | [GaelNotFound/bertoti](https://github.com/GaelNotFound/bertoti) |
 | Emmanuel Basile Garakis Filho | A confirmar |
 | Giovanni Moretto | [Giomoret/Bertoti](https://github.com/Giomoret/Bertoti) |
-| Lucas | A confirmar |
+| Lucas | [LucasCassiano1/Bertoti](https://github.com/LucasCassiano1/bertoti) |
 | Heitor Silva | [heitors1337/bertoti](https://github.com/heitors1337/bertoti) |
 | Cauan Gabriel | [LoadCG/bertoti](https://github.com/LoadCG/bertoti) |
 | Rafael Matesco | A confirmar |
